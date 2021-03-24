@@ -18,6 +18,7 @@ import com.google.common.collect.ImmutableSet;
 import io.trino.plugin.bigquery.BigQueryQueryRunner.BigQuerySqlExecutor;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
+import io.trino.testing.sql.TestTable;
 import org.testng.annotations.Test;
 
 import java.util.stream.Stream;
@@ -29,6 +30,8 @@ import static java.util.Locale.ENGLISH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 
+// With case-insensitive-name-matching enabled colliding schema/table names are considered as errors.
+// Some tests here create colliding names which can cause any other concurrent test to fail.
 @Test(singleThreaded = true)
 public class TestBigQueryCaseInsensitiveMapping
         extends AbstractTestQueryFramework
@@ -175,6 +178,10 @@ public class TestBigQueryCaseInsensitiveMapping
         return () -> bigQuerySqlExecutor.dropDataset(schemaName);
     }
 
+    /**
+     * @deprecated Use {@link TestTable} instead.
+     */
+    @Deprecated
     private AutoCloseable withTable(String tableName, String tableDefinition)
     {
         bigQuerySqlExecutor.execute(format("CREATE TABLE %s %s", tableName, tableDefinition));

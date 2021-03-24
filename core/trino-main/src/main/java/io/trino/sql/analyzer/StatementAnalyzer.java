@@ -117,6 +117,7 @@ import io.trino.sql.tree.JoinUsing;
 import io.trino.sql.tree.Lateral;
 import io.trino.sql.tree.Limit;
 import io.trino.sql.tree.LongLiteral;
+import io.trino.sql.tree.Merge;
 import io.trino.sql.tree.NaturalJoin;
 import io.trino.sql.tree.Node;
 import io.trino.sql.tree.NodeRef;
@@ -260,7 +261,6 @@ import static io.trino.sql.analyzer.Scope.BasisType.TABLE;
 import static io.trino.sql.analyzer.ScopeReferenceExtractor.getReferencesToScope;
 import static io.trino.sql.analyzer.SemanticExceptions.semanticException;
 import static io.trino.sql.analyzer.TypeSignatureProvider.fromTypes;
-import static io.trino.sql.planner.ExpressionInterpreter.expressionOptimizer;
 import static io.trino.sql.tree.BooleanLiteral.TRUE_LITERAL;
 import static io.trino.sql.tree.ExplainType.Type.DISTRIBUTED;
 import static io.trino.sql.tree.Join.Type.FULL;
@@ -279,7 +279,6 @@ import static java.util.Objects.requireNonNull;
 class StatementAnalyzer
 {
     private static final Set<String> WINDOW_VALUE_FUNCTIONS = ImmutableSet.of("lead", "lag", "first_value", "last_value", "nth_value");
-    private static final String STORAGE_TABLE = "storage_table";
 
     private final Analysis analysis;
     private final Metadata metadata;
@@ -407,6 +406,10 @@ class StatementAnalyzer
             }
             accessControl.checkCanInsertIntoTable(session.toSecurityContext(), targetTable);
 
+            if (!accessControl.getRowFilters(session.toSecurityContext(), targetTable).isEmpty()) {
+                throw semanticException(NOT_SUPPORTED, insert, "Insert into table with a row filter is not supported");
+            }
+
             TableMetadata tableMetadata = metadata.getTableMetadata(session, targetTableHandle.get());
 
             List<ColumnMetadata> columns = tableMetadata.getColumns().stream()
@@ -415,7 +418,7 @@ class StatementAnalyzer
 
             for (ColumnMetadata column : columns) {
                 if (!accessControl.getColumnMasks(session.toSecurityContext(), targetTable, column.getName(), column.getType()).isEmpty()) {
-                    throw semanticException(NOT_SUPPORTED, insert, "Insert into table with column masks");
+                    throw semanticException(NOT_SUPPORTED, insert, "Insert into table with column masks is not supported");
                 }
             }
 
@@ -1174,7 +1177,7 @@ class StatementAnalyzer
                 return Optional.empty();
             }
 
-            String storageTable = String.valueOf(optionalView.get().getProperties().getOrDefault(STORAGE_TABLE, ""));
+            String storageTable = optionalView.get().getStorageTable();
             if (storageTable == null || storageTable.isEmpty()) {
                 return Optional.empty();
             }
@@ -1541,7 +1544,7 @@ class StatementAnalyzer
                 throw semanticException(TYPE_MISMATCH, samplePercentage, "Sample percentage should be a numeric expression");
             }
 
-            ExpressionInterpreter samplePercentageEval = expressionOptimizer(samplePercentage, metadata, session, expressionTypes);
+            ExpressionInterpreter samplePercentageEval = new ExpressionInterpreter(samplePercentage, metadata, session, expressionTypes);
 
             Object samplePercentageObject = samplePercentageEval.optimize(symbol -> {
                 throw semanticException(EXPRESSION_NOT_CONSTANT, samplePercentage, "Sample percentage cannot contain column references");
@@ -1928,6 +1931,12 @@ class StatementAnalyzer
             }
 
             return createAndAssignScope(update, scope, Field.newUnqualified("rows", BIGINT));
+        }
+
+        @Override
+        protected Scope visitMerge(Merge merge, Optional<Scope> scope)
+        {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support merge");
         }
 
         private Scope analyzeJoinUsing(Join node, List<Identifier> columns, Optional<Scope> scope, Scope left, Scope right)

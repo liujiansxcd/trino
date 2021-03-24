@@ -490,6 +490,10 @@ public class DistributedQueryRunner
         try {
             return trinoClient.execute(session, sql).getResult();
         }
+        catch (Throwable e) {
+            e.addSuppressed(new Exception("SQL: " + sql));
+            throw e;
+        }
         finally {
             lock.readLock().unlock();
         }
@@ -550,7 +554,13 @@ public class DistributedQueryRunner
         QueryManager queryManager = coordinator.getQueryManager();
         for (BasicQueryInfo queryInfo : queryManager.getQueries()) {
             if (!queryInfo.getState().isDone()) {
-                queryManager.cancelQuery(queryInfo.getQueryId());
+                try {
+                    queryManager.cancelQuery(queryInfo.getQueryId());
+                }
+                catch (RuntimeException e) {
+                    // TODO (https://github.com/trinodb/trino/issues/6723) query cancellation can sometimes fail
+                    log.warn(e, "Failed to cancel query");
+                }
             }
         }
     }

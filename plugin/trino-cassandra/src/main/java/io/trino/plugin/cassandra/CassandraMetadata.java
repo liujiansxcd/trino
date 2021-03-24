@@ -272,12 +272,6 @@ public class CassandraMetadata
     }
 
     @Override
-    public void renameTable(ConnectorSession session, ConnectorTableHandle tableHandle, SchemaTableName newTableName)
-    {
-        throw new TrinoException(NOT_SUPPORTED, "Renaming tables not yet supported for Cassandra");
-    }
-
-    @Override
     public ConnectorOutputTableHandle beginCreateTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, Optional<ConnectorNewTableLayout> layout)
     {
         return createTable(tableMetadata);
@@ -381,7 +375,7 @@ public class CassandraMetadata
     @Override
     public ConnectorTableHandle beginDelete(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
-        throw new TrinoException(NOT_SUPPORTED, "This connector only supports delete with primary key or partition key");
+        throw new TrinoException(NOT_SUPPORTED, "Delete without primary key or partition key is not supported");
     }
 
     @Override
@@ -396,7 +390,7 @@ public class CassandraMetadata
         CassandraTableHandle handle = (CassandraTableHandle) deleteHandle;
         Optional<List<CassandraPartition>> partitions = handle.getPartitions();
         if (partitions.isEmpty()) {
-            throw new TrinoException(NOT_SUPPORTED, "Deleting without partition key is unsupported");
+            throw new TrinoException(NOT_SUPPORTED, "Deleting without partition key is not supported");
         }
         if (partitions.get().isEmpty()) {
             // there are no records of a given partition key

@@ -132,6 +132,7 @@ import static io.trino.operator.StageExecutionDescriptor.ungroupedExecution;
 import static io.trino.sql.DynamicFilters.extractDynamicFilters;
 import static io.trino.sql.ExpressionUtils.combineConjunctsWithDuplicates;
 import static io.trino.sql.planner.SystemPartitioningHandle.SINGLE_DISTRIBUTION;
+import static io.trino.sql.planner.plan.JoinNode.Type.INNER;
 import static io.trino.sql.planner.planprinter.PlanNodeStatsSummarizer.aggregateStageStats;
 import static io.trino.sql.planner.planprinter.TextRenderer.formatDouble;
 import static io.trino.sql.planner.planprinter.TextRenderer.formatPositions;
@@ -784,7 +785,7 @@ public class PlanPrinter
                 formatString += "filterPredicate = %s, ";
                 Expression predicate = filterNode.get().getPredicate();
                 DynamicFilters.ExtractResult extractResult = extractDynamicFilters(predicate);
-                arguments.add(combineConjunctsWithDuplicates(extractResult.getStaticConjuncts()));
+                arguments.add(unresolveFunctions(combineConjunctsWithDuplicates(extractResult.getStaticConjuncts())));
                 if (!extractResult.getDynamicConjuncts().isEmpty()) {
                     formatString += "dynamicFilter = %s, ";
                     arguments.add(printDynamicFilters(extractResult.getDynamicConjuncts()));
@@ -886,7 +887,12 @@ public class PlanPrinter
                 name = node.getJoinType().getJoinLabel() + " Unnest";
             }
             else if (!node.getReplicateSymbols().isEmpty()) {
-                name = "CrossJoin Unnest";
+                if (node.getJoinType() == INNER) {
+                    name = "CrossJoin Unnest";
+                }
+                else {
+                    name = node.getJoinType().getJoinLabel() + " Unnest";
+                }
             }
             else {
                 name = "Unnest";

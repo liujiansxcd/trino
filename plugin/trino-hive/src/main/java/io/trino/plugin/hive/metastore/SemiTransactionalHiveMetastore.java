@@ -379,7 +379,7 @@ public class SemiTransactionalHiveMetastore
     {
         AcidTransaction transaction = currentHiveTransaction.isPresent() ? currentHiveTransaction.get().getTransaction() : NO_ACID_TRANSACTION;
         setExclusive((delegate, hdfsEnvironment) ->
-                delegate.updateTableStatistics(identity, table.getDatabaseName(), table.getTableName(), statistics -> updatePartitionStatistics(statistics, tableStatistics), transaction));
+                delegate.updateTableStatistics(identity, table.getDatabaseName(), table.getTableName(), transaction, statistics -> updatePartitionStatistics(statistics, tableStatistics)));
     }
 
     // TODO: Allow updating statistics for 2 tables in the same transaction
@@ -1203,26 +1203,26 @@ public class SemiTransactionalHiveMetastore
                     queryId);
             currentQueryId = Optional.of(queryId);
 
-            hiveTransactionSupplier = Optional.of(() -> makeHiveTransaction(session, "query", transactionId -> NO_ACID_TRANSACTION));
+            hiveTransactionSupplier = Optional.of(() -> makeHiveTransaction(session, transactionId -> NO_ACID_TRANSACTION));
         }
     }
 
     public AcidTransaction beginInsert(ConnectorSession session, Table table)
     {
-        return beginOperation(session, table, "insert", AcidOperation.INSERT, DataOperationType.INSERT, Optional.empty());
+        return beginOperation(session, table, AcidOperation.INSERT, DataOperationType.INSERT, Optional.empty());
     }
 
     public AcidTransaction beginDelete(ConnectorSession session, Table table)
     {
-        return beginOperation(session, table, "delete", AcidOperation.DELETE, DataOperationType.DELETE, Optional.empty());
+        return beginOperation(session, table, AcidOperation.DELETE, DataOperationType.DELETE, Optional.empty());
     }
 
     public AcidTransaction beginUpdate(ConnectorSession session, Table table, HiveUpdateProcessor updateProcessor)
     {
-        return beginOperation(session, table, "update", AcidOperation.UPDATE, DataOperationType.UPDATE, Optional.of(updateProcessor));
+        return beginOperation(session, table, AcidOperation.UPDATE, DataOperationType.UPDATE, Optional.of(updateProcessor));
     }
 
-    private AcidTransaction beginOperation(ConnectorSession session, Table table, String description, AcidOperation operation, DataOperationType hiveOperation, Optional<HiveUpdateProcessor> updateProcessor)
+    private AcidTransaction beginOperation(ConnectorSession session, Table table, AcidOperation operation, DataOperationType hiveOperation, Optional<HiveUpdateProcessor> updateProcessor)
     {
         String queryId = session.getQueryId();
 
@@ -1231,10 +1231,10 @@ public class SemiTransactionalHiveMetastore
 
             // We start the transaction immediately, and allocate the write lock and the writeId,
             // because we need the writeId in order to write the delta files.
-            HiveTransaction hiveTransaction = makeHiveTransaction(session, description, transactionId -> {
+            HiveTransaction hiveTransaction = makeHiveTransaction(session, transactionId -> {
                 acquireTableWriteLock(
                         new HiveIdentity(session),
-                        description + " in " + table.getSchemaTableName(),
+                        queryId,
                         transactionId,
                         table.getDatabaseName(),
                         table.getTableName(),
@@ -1249,7 +1249,7 @@ public class SemiTransactionalHiveMetastore
         }
     }
 
-    private HiveTransaction makeHiveTransaction(ConnectorSession session, String description, Function<Long, AcidTransaction> transactionMaker)
+    private HiveTransaction makeHiveTransaction(ConnectorSession session, Function<Long, AcidTransaction> transactionMaker)
     {
         String queryId = session.getQueryId();
         HiveIdentity identity = new HiveIdentity(session);
@@ -1258,7 +1258,7 @@ public class SemiTransactionalHiveMetastore
                 .map(Duration::toMillis)
                 .orElseGet(this::getServerExpectedHeartbeatIntervalMillis);
         long transactionId = delegate.openTransaction(identity);
-        log.debug("Using hive transaction %s for %s %s", transactionId, description, queryId);
+        log.debug("Using hive transaction %s for %s", transactionId, queryId);
 
         ScheduledFuture<?> heartbeatTask = heartbeatExecutor.scheduleAtFixedRate(
                 () -> delegate.sendTransactionHeartbeat(identity, transactionId),
@@ -3247,7 +3247,7 @@ public class SemiTransactionalHiveMetastore
                 metastore.updatePartitionStatistics(identity, tableName.getSchemaName(), tableName.getTableName(), partitionName.get(), this::updateStatistics);
             }
             else {
-                metastore.updateTableStatistics(identity, tableName.getSchemaName(), tableName.getTableName(), this::updateStatistics, transaction);
+                metastore.updateTableStatistics(identity, tableName.getSchemaName(), tableName.getTableName(), transaction, this::updateStatistics);
             }
             done = true;
         }
@@ -3261,7 +3261,7 @@ public class SemiTransactionalHiveMetastore
                 metastore.updatePartitionStatistics(identity, tableName.getSchemaName(), tableName.getTableName(), partitionName.get(), this::resetStatistics);
             }
             else {
-                metastore.updateTableStatistics(identity, tableName.getSchemaName(), tableName.getTableName(), this::resetStatistics, transaction);
+                metastore.updateTableStatistics(identity, tableName.getSchemaName(), tableName.getTableName(), transaction, this::resetStatistics);
             }
         }
 

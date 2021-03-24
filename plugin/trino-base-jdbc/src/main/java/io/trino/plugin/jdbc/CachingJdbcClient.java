@@ -27,7 +27,10 @@ import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableMetadata;
+import io.trino.spi.connector.JoinStatistics;
+import io.trino.spi.connector.JoinType;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.spi.connector.SortItem;
 import io.trino.spi.connector.SystemTable;
 import io.trino.spi.connector.TableScanRedirectApplicationResult;
 import io.trino.spi.predicate.TupleDomain;
@@ -72,6 +75,7 @@ public class CachingJdbcClient
     private final Cache<TableHandleCacheKey, Optional<JdbcTableHandle>> tableHandleCache;
     private final Cache<ColumnsCacheKey, List<JdbcColumnHandle>> columnsCache;
     private final List<PropertyMetadata<?>> sessionProperties;
+    private final Cache<TableStatisticsCacheKey, TableStatistics> statisticsCache;
 
     @Inject
     public CachingJdbcClient(@StatsCollecting JdbcClient delegate, Set<SessionPropertiesProvider> sessionPropertiesProviders, BaseJdbcConfig config)
@@ -101,6 +105,7 @@ public class CachingJdbcClient
         tableNamesCache = cacheBuilder.build();
         tableHandleCache = cacheBuilder.build();
         columnsCache = cacheBuilder.build();
+        statisticsCache = cacheBuilder.build();
     }
 
     @Override
@@ -203,6 +208,32 @@ public class CachingJdbcClient
     }
 
     @Override
+    public Optional<PreparedQuery> implementJoin(
+            ConnectorSession session,
+            JoinType joinType,
+            PreparedQuery leftSource,
+            PreparedQuery rightSource,
+            List<JdbcJoinCondition> joinConditions,
+            Map<JdbcColumnHandle, String> rightAssignments,
+            Map<JdbcColumnHandle, String> leftAssignments,
+            JoinStatistics statistics)
+    {
+        return delegate.implementJoin(session, joinType, leftSource, rightSource, joinConditions, rightAssignments, leftAssignments, statistics);
+    }
+
+    @Override
+    public boolean supportsTopN(ConnectorSession session, JdbcTableHandle handle, List<SortItem> sortOrder)
+    {
+        return delegate.supportsTopN(session, handle, sortOrder);
+    }
+
+    @Override
+    public boolean isTopNLimitGuaranteed(ConnectorSession session)
+    {
+        return delegate.isTopNLimitGuaranteed(session);
+    }
+
+    @Override
     public boolean supportsLimit()
     {
         return delegate.supportsLimit();
@@ -286,7 +317,24 @@ public class CachingJdbcClient
     @Override
     public TableStatistics getTableStatistics(ConnectorSession session, JdbcTableHandle handle, TupleDomain<ColumnHandle> tupleDomain)
     {
-        return delegate.getTableStatistics(session, handle, tupleDomain);
+        if (!handle.isNamedRelation()) {
+            // only cache named relation as we need to be able to invalidate the cache by table name
+            // TODO https://github.com/trinodb/trino/issues/6832 - to support other JdbcTableHandle types
+            return delegate.getTableStatistics(session, handle, tupleDomain);
+        }
+
+        TableStatisticsCacheKey key = new TableStatisticsCacheKey(handle, tupleDomain);
+
+        TableStatistics cachedStatistics = statisticsCache.getIfPresent(key);
+        if (cachedStatistics != null) {
+            return cachedStatistics;
+        }
+
+        TableStatistics statistics = delegate.getTableStatistics(session, handle, tupleDomain);
+        if (!statistics.equals(TableStatistics.empty()) || cacheMissing) {
+            statisticsCache.put(key, statistics);
+        }
+        return statistics;
     }
 
     @Override
@@ -404,6 +452,7 @@ public class CachingJdbcClient
         invalidateColumnsCache(schemaTableName);
         invalidateCache(tableHandleCache, key -> key.tableName.equals(schemaTableName));
         invalidateCache(tableNamesCache, key -> key.schemaName.equals(Optional.of(schemaTableName.getSchemaName())));
+        invalidateCache(statisticsCache, key -> key.tableHandle.getRequiredNamedRelation().getSchemaTableName().equals(schemaTableName));
     }
 
     private void invalidateColumnsCache(SchemaTableName table)
@@ -415,6 +464,12 @@ public class CachingJdbcClient
     CacheStats getColumnsCacheStats()
     {
         return columnsCache.stats();
+    }
+
+    @VisibleForTesting
+    CacheStats getStatisticsCacheStats()
+    {
+        return statisticsCache.stats();
     }
 
     private static <T, V> void invalidateCache(Cache<T, V> cache, Predicate<T> filterFunction)
@@ -552,6 +607,39 @@ public class CachingJdbcClient
         catch (ExecutionException e) {
             throwIfInstanceOf(e.getCause(), TrinoException.class);
             throw new UncheckedExecutionException(e);
+        }
+    }
+
+    private static final class TableStatisticsCacheKey
+    {
+        // TODO depend on Identity when needed
+        private final JdbcTableHandle tableHandle;
+        private final TupleDomain<ColumnHandle> tupleDomain;
+
+        private TableStatisticsCacheKey(JdbcTableHandle tableHandle, TupleDomain<ColumnHandle> tupleDomain)
+        {
+            this.tableHandle = requireNonNull(tableHandle, "tableHandle is null");
+            this.tupleDomain = requireNonNull(tupleDomain, "tupleDomain is null");
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            TableStatisticsCacheKey that = (TableStatisticsCacheKey) o;
+            return tableHandle.equals(that.tableHandle)
+                    && tupleDomain.equals(that.tupleDomain);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(tableHandle, tupleDomain);
         }
     }
 }

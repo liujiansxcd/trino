@@ -23,14 +23,10 @@ import java.util.Optional;
 import static io.trino.spi.function.InvocationConvention.InvocationArgumentConvention.NEVER_NULL;
 import static io.trino.spi.function.InvocationConvention.InvocationReturnConvention.FAIL_ON_NULL;
 import static io.trino.spi.function.InvocationConvention.simpleConvention;
-import static io.trino.spi.predicate.Marker.Bound.ABOVE;
-import static io.trino.spi.predicate.Marker.Bound.BELOW;
-import static io.trino.spi.predicate.Marker.Bound.EXACTLY;
 import static io.trino.spi.predicate.Utils.TUPLE_DOMAIN_TYPE_OPERATORS;
 import static io.trino.spi.predicate.Utils.handleThrowable;
 import static io.trino.spi.predicate.Utils.nativeValueToBlock;
 import static io.trino.spi.type.TypeUtils.isFloatingPointNaN;
-import static io.trino.spi.type.TypeUtils.readNativeValue;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
@@ -48,34 +44,7 @@ public final class Range
     private final MethodHandle comparisonOperator;
     private final boolean isSingleValue;
 
-    @Deprecated
-    public Range(Marker low, Marker high)
-    {
-        this(
-                verifyMarkersAndGetType(low, high),
-                low.getBound() == EXACTLY,
-                low.getValueBlock().map(block -> readNativeValue(low.getType(), block, 0)),
-                high.getBound() == EXACTLY,
-                high.getValueBlock().map(block -> readNativeValue(high.getType(), block, 0)));
-    }
-
-    private static Type verifyMarkersAndGetType(Marker low, Marker high)
-    {
-        requireNonNull(low, "value is null");
-        requireNonNull(high, "value is null");
-        if (!low.getType().equals(high.getType())) {
-            throw new IllegalArgumentException(format("Marker types do not match: %s vs %s", low.getType(), high.getType()));
-        }
-        if (low.getBound() == BELOW) {
-            throw new IllegalArgumentException("low bound must be EXACTLY or ABOVE");
-        }
-        if (high.getBound() == ABOVE) {
-            throw new IllegalArgumentException("high bound must be EXACTLY or BELOW");
-        }
-        return low.getType();
-    }
-
-    private Range(Type type, boolean lowInclusive, Optional<Object> lowValue, boolean highInclusive, Optional<Object> highValue)
+    Range(Type type, boolean lowInclusive, Optional<Object> lowValue, boolean highInclusive, Optional<Object> highValue)
     {
         requireNonNull(type, "type is null");
         this.type = type;
@@ -170,15 +139,6 @@ public final class Range
         return type;
     }
 
-    /**
-     * @deprecated Use {@link #isLowInclusive()} and {@link #getLowValue()}.
-     */
-    @Deprecated
-    public Marker getLow()
-    {
-        return new Marker(type, lowValue.map(value -> nativeValueToBlock(type, value)), lowInclusive ? EXACTLY : ABOVE);
-    }
-
     public boolean isLowInclusive()
     {
         return lowInclusive;
@@ -197,15 +157,6 @@ public final class Range
     public Optional<Object> getLowValue()
     {
         return lowValue;
-    }
-
-    /**
-     * @deprecated Use {@link #isHighInclusive()} and {@link #getHighValue()}.
-     */
-    @Deprecated
-    public Marker getHigh()
-    {
-        return new Marker(type, highValue.map(value -> nativeValueToBlock(type, value)), highInclusive ? EXACTLY : BELOW);
     }
 
     public boolean isHighInclusive()
@@ -246,14 +197,6 @@ public final class Range
         return lowValue.isEmpty() && highValue.isEmpty();
     }
 
-    @Deprecated
-    public boolean includes(Marker marker)
-    {
-        requireNonNull(marker, "marker is null");
-        checkTypeCompatibility(marker);
-        return getLow().compareTo(marker) <= 0 && getHigh().compareTo(marker) >= 0;
-    }
-
     public boolean contains(Range other)
     {
         checkTypeCompatibility(other);
@@ -275,21 +218,21 @@ public final class Range
                 compareHighBound >= 0 ? this.highValue : other.highValue);
     }
 
-    public Range intersect(Range other)
+    public Optional<Range> intersect(Range other)
     {
         checkTypeCompatibility(other);
         if (!this.overlaps(other)) {
-            throw new IllegalArgumentException("Cannot intersect non-overlapping ranges");
+            return Optional.empty();
         }
 
         int compareLowBound = compareLowBound(other);
         int compareHighBound = compareHighBound(other);
-        return new Range(
+        return Optional.of(new Range(
                 type,
                 compareLowBound >= 0 ? this.lowInclusive : other.lowInclusive,
                 compareLowBound >= 0 ? this.lowValue : other.lowValue,
                 compareHighBound <= 0 ? this.highInclusive : other.highInclusive,
-                compareHighBound <= 0 ? this.highValue : other.highValue);
+                compareHighBound <= 0 ? this.highValue : other.highValue));
     }
 
     public boolean overlaps(Range other)
@@ -360,13 +303,6 @@ public final class Range
     {
         if (!getType().equals(range.getType())) {
             throw new IllegalArgumentException(format("Mismatched Range types: %s vs %s", getType(), range.getType()));
-        }
-    }
-
-    private void checkTypeCompatibility(Marker marker)
-    {
-        if (!getType().equals(marker.getType())) {
-            throw new IllegalArgumentException(format("Marker of %s does not match Range of %s", marker.getType(), getType()));
         }
     }
 

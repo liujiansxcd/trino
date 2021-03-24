@@ -32,7 +32,7 @@ import static io.trino.tempto.assertions.QueryAssert.assertThat;
 import static io.trino.tempto.query.QueryExecutor.query;
 import static io.trino.tests.TestGroups.HIVE_VIEWS;
 import static io.trino.tests.utils.QueryExecutors.onHive;
-import static io.trino.tests.utils.QueryExecutors.onPresto;
+import static io.trino.tests.utils.QueryExecutors.onTrino;
 import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
@@ -62,16 +62,35 @@ public abstract class AbstractTestHiveViews
     @Test(groups = HIVE_VIEWS)
     public void testArrayIndexingInView()
     {
-        onHive().executeQuery("DROP VIEW IF EXISTS hive_zero_index_view");
-        onHive().executeQuery("DROP TABLE IF EXISTS hive_table_dummy");
+        onHive().executeQuery("DROP TABLE IF EXISTS test_hive_view_array_index_table");
+        onHive().executeQuery("CREATE TABLE test_hive_view_array_index_table(an_index int, an_array array<string>)");
+        onHive().executeQuery("INSERT INTO TABLE test_hive_view_array_index_table SELECT 1, array('presto','hive') FROM nation WHERE n_nationkey = 1");
 
-        onHive().executeQuery("CREATE TABLE hive_table_dummy(a int)");
-        onHive().executeQuery("CREATE VIEW hive_zero_index_view AS SELECT array('presto','hive')[1] AS sql_dialect FROM hive_table_dummy");
-        onHive().executeQuery("INSERT INTO TABLE hive_table_dummy VALUES (1)");
-
+        // literal array index
+        onHive().executeQuery("DROP VIEW IF EXISTS test_hive_view_array_index_view");
+        onHive().executeQuery("CREATE VIEW test_hive_view_array_index_view AS SELECT an_array[1] AS sql_dialect FROM test_hive_view_array_index_table");
         assertViewQuery(
-                "SELECT * FROM hive_zero_index_view",
+                "SELECT * FROM test_hive_view_array_index_view",
                 queryAssert -> queryAssert.containsOnly(row("hive")));
+
+        // expression array index
+        onHive().executeQuery("DROP VIEW IF EXISTS test_hive_view_expression_array_index_view");
+        onHive().executeQuery("CREATE VIEW test_hive_view_expression_array_index_view AS SELECT an_array[an_index] AS sql_dialect FROM test_hive_view_array_index_table");
+        assertViewQuery(
+                "SELECT * FROM test_hive_view_expression_array_index_view",
+                queryAssert -> queryAssert.containsOnly(row("hive")));
+    }
+
+    @Test(groups = HIVE_VIEWS)
+    public void testArrayConstructionInView()
+    {
+        onHive().executeQuery("DROP VIEW IF EXISTS test_array_construction_view");
+        onHive().executeQuery("CREATE VIEW test_array_construction_view AS SELECT n_nationkey, array(n_nationkey, n_regionkey) AS a FROM nation");
+
+        assertThat(onHive().executeQuery("SELECT a[0], a[1] FROM test_array_construction_view WHERE n_nationkey = 8"))
+                .containsOnly(row(8, 2));
+        assertThat(onTrino().executeQuery("SELECT a[1], a[2] FROM test_array_construction_view WHERE n_nationkey = 8"))
+                .containsOnly(row(8, 2));
     }
 
     @Test(groups = HIVE_VIEWS)
@@ -148,8 +167,8 @@ public abstract class AbstractTestHiveViews
     @Test(groups = HIVE_VIEWS)
     public void testLateralViewExplode()
     {
-        onPresto().executeQuery("DROP TABLE IF EXISTS pageAds");
-        onPresto().executeQuery("CREATE TABLE pageAds(pageid, adid_list) WITH (format='TEXTFILE') AS " +
+        onTrino().executeQuery("DROP TABLE IF EXISTS pageAds");
+        onTrino().executeQuery("CREATE TABLE pageAds(pageid, adid_list) WITH (format='TEXTFILE') AS " +
                 "VALUES " +
                 "  (CAST('two' AS varchar), ARRAY[11, 22]), " +
                 "  ('nothing', NULL), " +
@@ -223,8 +242,8 @@ public abstract class AbstractTestHiveViews
     @Test(groups = HIVE_VIEWS)
     public void testIdentifierThatStartWithDigit()
     {
-        onPresto().executeQuery("DROP TABLE IF EXISTS \"7_table_with_number\"");
-        onPresto().executeQuery("CREATE TABLE \"7_table_with_number\" WITH (format='TEXTFILE') AS SELECT CAST('abc' AS varchar) x");
+        onTrino().executeQuery("DROP TABLE IF EXISTS \"7_table_with_number\"");
+        onTrino().executeQuery("CREATE TABLE \"7_table_with_number\" WITH (format='TEXTFILE') AS SELECT CAST('abc' AS varchar) x");
 
         onHive().executeQuery("DROP VIEW IF EXISTS view_on_identifiers_starting_with_numbers");
         onHive().executeQuery("CREATE VIEW view_on_identifiers_starting_with_numbers AS SELECT * FROM 7_table_with_number");
@@ -242,8 +261,8 @@ public abstract class AbstractTestHiveViews
         onHive().executeQuery("CREATE SCHEMA test_schema;");
         onHive().executeQuery("CREATE VIEW test_schema.hive_test_view AS SELECT * FROM nation");
         onHive().executeQuery("CREATE TABLE test_schema.hive_table(a string)");
-        onPresto().executeQuery("CREATE TABLE test_schema.trino_table(a int)");
-        onPresto().executeQuery("CREATE VIEW test_schema.trino_test_view AS SELECT * FROM nation");
+        onTrino().executeQuery("CREATE TABLE test_schema.trino_table(a int)");
+        onTrino().executeQuery("CREATE VIEW test_schema.trino_test_view AS SELECT * FROM nation");
 
         boolean hiveWithTableNamesByType = getHiveVersionMajor() >= 3 ||
                 (getHiveVersionMajor() == 2 && getHiveVersionMinor() >= 3);
@@ -363,7 +382,7 @@ public abstract class AbstractTestHiveViews
     {
         // Ensure Hive and Presto view compatibility by comparing the results
         assertion.accept(assertThat(onHive().executeQuery(query)));
-        assertion.accept(assertThat(onPresto().executeQuery(query)));
+        assertion.accept(assertThat(onTrino().executeQuery(query)));
     }
 
     protected static Date sqlDate(int year, int month, int day)
@@ -379,14 +398,14 @@ public abstract class AbstractTestHiveViews
     protected void setSessionProperty(String key, String value)
     {
         // We need to setup sessions for both "presto" and "default" executors in tempto
-        onPresto().executeQuery(format("SET SESSION %s = %s", key, value));
+        onTrino().executeQuery(format("SET SESSION %s = %s", key, value));
         query(format("SET SESSION %s = %s", key, value));
     }
 
     protected void unsetSessionProperty(String key)
     {
         // We need to setup sessions for both "presto" and "default" executors in tempto
-        onPresto().executeQuery("RESET SESSION " + key);
+        onTrino().executeQuery("RESET SESSION " + key);
         query("RESET SESSION " + key);
     }
 }

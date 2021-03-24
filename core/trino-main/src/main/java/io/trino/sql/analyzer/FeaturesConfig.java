@@ -79,7 +79,8 @@ public class FeaturesConfig
     private JoinReorderingStrategy joinReorderingStrategy = JoinReorderingStrategy.AUTOMATIC;
     private int maxReorderedJoins = 9;
     private boolean redistributeWrites = true;
-    private boolean usePreferredWritePartitioning;
+    private boolean usePreferredWritePartitioning = true;
+    private int preferredWritePartitioningMinNumberOfPartitions = 50;
     private boolean scaleWriters;
     private DataSize writerMinSize = DataSize.of(32, DataSize.Unit.MEGABYTE);
     private boolean optimizeMetadataQueries;
@@ -129,13 +130,13 @@ public class FeaturesConfig
     private boolean rewriteFilteringSemiJoinToInnerJoin = true;
     private boolean optimizeDuplicateInsensitiveJoins = true;
     private boolean useLegacyWindowFilterPushdown;
-    private boolean planWithTableNodePartitioning = true;
+    private boolean useTableScanNodePartitioning = true;
+    private double tableScanNodePartitioningMinBucketToTaskRatio = 0.5;
 
     private Duration iterativeOptimizerTimeout = new Duration(3, MINUTES); // by default let optimizer wait a long time in case it retrieves some data from ConnectorMetadata
     private DataSize filterAndProjectMinOutputPageSize = DataSize.of(500, KILOBYTE);
     private int filterAndProjectMinOutputPageRowCount = 256;
     private int maxGroupingSets = 2048;
-    private JoinPushdownMode joinPushdownMode = JoinPushdownMode.DISABLED;
 
     public enum JoinReorderingStrategy
     {
@@ -166,21 +167,6 @@ public class FeaturesConfig
         NONE,
         ABORT,
         RETRY,
-        /**/;
-    }
-
-    public enum JoinPushdownMode
-    {
-        /**
-         * Do not try to push joins to connector.
-         */
-        DISABLED,
-        /**
-         * Try to push all joins except cross-joins to connector.
-         */
-        EAGER,
-        // TODO Add cost based logic to join pushdown
-        // AUTOMATIC,
         /**/;
     }
 
@@ -386,6 +372,20 @@ public class FeaturesConfig
     public FeaturesConfig setUsePreferredWritePartitioning(boolean usePreferredWritePartitioning)
     {
         this.usePreferredWritePartitioning = usePreferredWritePartitioning;
+        return this;
+    }
+
+    @Min(1)
+    public int getPreferredWritePartitioningMinNumberOfPartitions()
+    {
+        return preferredWritePartitioningMinNumberOfPartitions;
+    }
+
+    @Config("preferred-write-partitioning-min-number-of-partitions")
+    @ConfigDescription("Use preferred write partitioning when the number of written partitions exceeds the configured threshold")
+    public FeaturesConfig setPreferredWritePartitioningMinNumberOfPartitions(int preferredWritePartitioningMinNumberOfPartitions)
+    {
+        this.preferredWritePartitioningMinNumberOfPartitions = preferredWritePartitioningMinNumberOfPartitions;
         return this;
     }
 
@@ -1021,28 +1021,31 @@ public class FeaturesConfig
         return this;
     }
 
-    public boolean isPlanWithTableNodePartitioning()
+    public boolean isUseTableScanNodePartitioning()
     {
-        return planWithTableNodePartitioning;
+        return useTableScanNodePartitioning;
     }
 
-    @Config("optimizer.plan-with-table-node-partitioning")
-    @ConfigDescription("Adapt plan to pre-partitioned tables")
-    public FeaturesConfig setPlanWithTableNodePartitioning(boolean planWithTableNodePartitioning)
+    @Config("optimizer.use-table-scan-node-partitioning")
+    @LegacyConfig("optimizer.plan-with-table-node-partitioning")
+    @ConfigDescription("Adapt plan to node pre-partitioned tables")
+    public FeaturesConfig setUseTableScanNodePartitioning(boolean useTableScanNodePartitioning)
     {
-        this.planWithTableNodePartitioning = planWithTableNodePartitioning;
+        this.useTableScanNodePartitioning = useTableScanNodePartitioning;
         return this;
     }
 
-    public JoinPushdownMode getJoinPushdownMode()
+    @Min(0)
+    public double getTableScanNodePartitioningMinBucketToTaskRatio()
     {
-        return joinPushdownMode;
+        return tableScanNodePartitioningMinBucketToTaskRatio;
     }
 
-    @Config("optimizer.join-pushdown")
-    public FeaturesConfig setJoinPushdownMode(JoinPushdownMode joinPushdownMode)
+    @Config("optimizer.table-scan-node-partitioning-min-bucket-to-task-ratio")
+    @ConfigDescription("Min table scan bucket to task ratio for which plan will be adopted to node pre-partitioned tables")
+    public FeaturesConfig setTableScanNodePartitioningMinBucketToTaskRatio(double tableScanNodePartitioningMinBucketToTaskRatio)
     {
-        this.joinPushdownMode = joinPushdownMode;
+        this.tableScanNodePartitioningMinBucketToTaskRatio = tableScanNodePartitioningMinBucketToTaskRatio;
         return this;
     }
 }

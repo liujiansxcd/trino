@@ -80,6 +80,7 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.SystemTable;
 import io.trino.spi.connector.TableNotFoundException;
+import io.trino.spi.connector.TableScanRedirectApplicationResult;
 import io.trino.spi.connector.ViewNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.Variable;
@@ -167,6 +168,7 @@ import static io.trino.plugin.hive.HiveErrorCode.HIVE_FILESYSTEM_ERROR;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_INVALID_METADATA;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_UNKNOWN_ERROR;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_UNSUPPORTED_FORMAT;
+import static io.trino.plugin.hive.HiveErrorCode.HIVE_VIEW_TRANSLATION_ERROR;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_WRITER_CLOSE_ERROR;
 import static io.trino.plugin.hive.HivePartitionManager.extractPartitionValues;
 import static io.trino.plugin.hive.HiveSessionProperties.getCompressionCodec;
@@ -176,6 +178,7 @@ import static io.trino.plugin.hive.HiveSessionProperties.isBucketExecutionEnable
 import static io.trino.plugin.hive.HiveSessionProperties.isCollectColumnStatisticsOnWrite;
 import static io.trino.plugin.hive.HiveSessionProperties.isCreateEmptyBucketFiles;
 import static io.trino.plugin.hive.HiveSessionProperties.isOptimizedMismatchedBucketCount;
+import static io.trino.plugin.hive.HiveSessionProperties.isParallelPartitionedBucketedWrites;
 import static io.trino.plugin.hive.HiveSessionProperties.isProjectionPushdownEnabled;
 import static io.trino.plugin.hive.HiveSessionProperties.isRespectTableFormat;
 import static io.trino.plugin.hive.HiveSessionProperties.isSortedWritingEnabled;
@@ -256,6 +259,7 @@ import static io.trino.spi.StandardErrorCode.INVALID_SCHEMA_PROPERTY;
 import static io.trino.spi.StandardErrorCode.INVALID_TABLE_PROPERTY;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.StandardErrorCode.SCHEMA_NOT_EMPTY;
+import static io.trino.spi.StandardErrorCode.TABLE_NOT_FOUND;
 import static io.trino.spi.predicate.TupleDomain.withColumnDomains;
 import static io.trino.spi.statistics.TableStatisticType.ROW_COUNT;
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -317,6 +321,7 @@ public class HiveMetadata
     private final boolean hideDeltaLakeTables;
     private final String prestoVersion;
     private final HiveStatisticsProvider hiveStatisticsProvider;
+    private final HiveRedirectionsProvider hiveRedirectionsProvider;
     private final AccessControlMetadata accessControlMetadata;
 
     public HiveMetadata(
@@ -333,6 +338,7 @@ public class HiveMetadata
             JsonCodec<PartitionUpdate> partitionUpdateCodec,
             String trinoVersion,
             HiveStatisticsProvider hiveStatisticsProvider,
+            HiveRedirectionsProvider hiveRedirectionsProvider,
             AccessControlMetadata accessControlMetadata)
     {
         this.catalogName = requireNonNull(catalogName, "catalogName is null");
@@ -348,6 +354,7 @@ public class HiveMetadata
         this.hideDeltaLakeTables = hideDeltaLakeTables;
         this.prestoVersion = requireNonNull(trinoVersion, "trinoVersion is null");
         this.hiveStatisticsProvider = requireNonNull(hiveStatisticsProvider, "hiveStatisticsProvider is null");
+        this.hiveRedirectionsProvider = requireNonNull(hiveRedirectionsProvider, "hiveRedirectionsProvider is null");
         this.accessControlMetadata = requireNonNull(accessControlMetadata, "accessControlMetadata is null");
     }
 
@@ -2006,6 +2013,29 @@ public class HiveMetadata
     }
 
     @Override
+    public Map<SchemaTableName, ConnectorViewDefinition> getViews(ConnectorSession session, Optional<String> schemaName)
+    {
+        ImmutableMap.Builder<SchemaTableName, ConnectorViewDefinition> views = ImmutableMap.builder();
+        for (SchemaTableName name : listViews(session, schemaName)) {
+            try {
+                getView(session, name).ifPresent(view -> views.put(name, view));
+            }
+            catch (TrinoException e) {
+                if (e.getErrorCode().equals(HIVE_VIEW_TRANSLATION_ERROR.toErrorCode())) {
+                    // Ignore hive views for which translation fails
+                }
+                else if (e.getErrorCode().equals(TABLE_NOT_FOUND.toErrorCode())) {
+                    // Ignore view that was dropped during query execution (race condition)
+                }
+                else {
+                    throw e;
+                }
+            }
+        }
+        return views.build();
+    }
+
+    @Override
     public Optional<ConnectorViewDefinition> getView(ConnectorSession session, SchemaTableName viewName)
     {
         if (!filterSchema(viewName.getSchemaName())) {
@@ -2261,13 +2291,29 @@ public class HiveMetadata
         Map<ConnectorExpression, ProjectedColumnRepresentation> columnProjections = projectedExpressions.stream()
                 .collect(toImmutableMap(Function.identity(), HiveApplyProjectionUtil::createProjectedColumnRepresentation));
 
-        // No pushdown required if all references are simple variables
+        HiveTableHandle hiveTableHandle = (HiveTableHandle) handle;
+        // all references are simple variables
         if (columnProjections.values().stream().allMatch(ProjectedColumnRepresentation::isVariable)) {
-            return Optional.empty();
+            Set<ColumnHandle> projectedColumns = ImmutableSet.copyOf(assignments.values());
+            if (hiveTableHandle.getProjectedColumns().isPresent()
+                    && hiveTableHandle.getProjectedColumns().get().equals(projectedColumns)) {
+                return Optional.empty();
+            }
+            List<Assignment> assignmentsList = assignments.entrySet().stream()
+                    .map(assignment -> new Assignment(
+                            assignment.getKey(),
+                            assignment.getValue(),
+                            ((HiveColumnHandle) assignment.getValue()).getType()))
+                    .collect(toImmutableList());
+            return Optional.of(new ProjectionApplicationResult<>(
+                    hiveTableHandle.withProjectedColumns(projectedColumns),
+                    projections,
+                    assignmentsList));
         }
 
         Map<String, Assignment> newAssignments = new HashMap<>();
         ImmutableMap.Builder<ConnectorExpression, Variable> newVariablesBuilder = ImmutableMap.builder();
+        ImmutableSet.Builder<ColumnHandle> projectedColumnsBuilder = ImmutableSet.builder();
 
         for (Map.Entry<ConnectorExpression, ProjectedColumnRepresentation> entry : columnProjections.entrySet()) {
             ConnectorExpression expression = entry.getKey();
@@ -2295,6 +2341,7 @@ public class HiveMetadata
             newAssignments.put(projectedColumnName, newAssignment);
 
             newVariablesBuilder.put(expression, projectedColumnVariable);
+            projectedColumnsBuilder.add(projectedColumnHandle);
         }
 
         // Modify projections to refer to new variables
@@ -2304,7 +2351,10 @@ public class HiveMetadata
                 .collect(toImmutableList());
 
         List<Assignment> outputAssignments = newAssignments.values().stream().collect(toImmutableList());
-        return Optional.of(new ProjectionApplicationResult<>(handle, newProjections, outputAssignments));
+        return Optional.of(new ProjectionApplicationResult<>(
+                hiveTableHandle.withProjectedColumns(projectedColumnsBuilder.build()),
+                newProjections,
+                outputAssignments));
     }
 
     private HiveColumnHandle createProjectedColumnHandle(HiveColumnHandle column, List<Integer> indices)
@@ -2341,11 +2391,20 @@ public class HiveMetadata
     }
 
     @Override
+    public Optional<TableScanRedirectApplicationResult> applyTableScanRedirect(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return hiveRedirectionsProvider.getTableScanRedirection(session, (HiveTableHandle) tableHandle);
+    }
+
+    @Override
     public Optional<ConnectorPartitioningHandle> getCommonPartitioningHandle(ConnectorSession session, ConnectorPartitioningHandle left, ConnectorPartitioningHandle right)
     {
         HivePartitioningHandle leftHandle = (HivePartitioningHandle) left;
         HivePartitioningHandle rightHandle = (HivePartitioningHandle) right;
 
+        if (leftHandle.isUsePartitionedBucketing() != rightHandle.isUsePartitionedBucketing()) {
+            return Optional.empty();
+        }
         if (!leftHandle.getHiveTypes().equals(rightHandle.getHiveTypes())) {
             return Optional.empty();
         }
@@ -2434,6 +2493,7 @@ public class HiveMetadata
                 hiveTable.getAnalyzePartitionValues(),
                 hiveTable.getAnalyzeColumnNames(),
                 Optional.empty(),
+                Optional.empty(), // Projected columns is used only during optimization phase of planning
                 hiveTable.getTransaction());
     }
 
@@ -2548,7 +2608,7 @@ public class HiveMetadata
                         .map(HiveColumnHandle::getHiveType)
                         .collect(toList()),
                 OptionalInt.of(hiveBucketHandle.get().getTableBucketCount()),
-                !partitionColumns.isEmpty());
+                !partitionColumns.isEmpty() && isParallelPartitionedBucketedWrites(session));
         return Optional.of(new ConnectorNewTableLayout(partitioningHandle, partitioningColumns.build()));
     }
 
@@ -2584,7 +2644,7 @@ public class HiveMetadata
                                 .map(hiveTypeMap::get)
                                 .collect(toImmutableList()),
                         OptionalInt.of(bucketProperty.get().getBucketCount()),
-                        !partitionedBy.isEmpty()),
+                        !partitionedBy.isEmpty() && isParallelPartitionedBucketedWrites(session)),
                 ImmutableList.<String>builder()
                         .addAll(bucketedBy)
                         .addAll(partitionedBy)

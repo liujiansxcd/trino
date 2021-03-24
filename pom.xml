@@ -5,12 +5,12 @@
     <parent>
         <groupId>io.airlift</groupId>
         <artifactId>airbase</artifactId>
-        <version>106</version>
+        <version>107</version>
     </parent>
 
     <groupId>io.trino</groupId>
     <artifactId>trino-root</artifactId>
-    <version>353-SNAPSHOT</version>
+    <version>355-SNAPSHOT</version>
 
     <name>trino-root</name>
     <description>Trino</description>
@@ -47,7 +47,7 @@
         <dep.accumulo.version>1.7.4</dep.accumulo.version>
         <dep.accumulo-hadoop.version>2.7.7-1</dep.accumulo-hadoop.version>
         <dep.antlr.version>4.9</dep.antlr.version>
-        <dep.airlift.version>202</dep.airlift.version>
+        <dep.airlift.version>203</dep.airlift.version>
         <dep.packaging.version>${dep.airlift.version}</dep.packaging.version>
         <dep.aws-sdk.version>1.11.946</dep.aws-sdk.version>
         <dep.okhttp.version>3.14.9</dep.okhttp.version>
@@ -61,7 +61,7 @@
         <dep.errorprone.version>2.5.1</dep.errorprone.version>
         <dep.testcontainers.version>1.15.1</dep.testcontainers.version>
         <dep.docker-java.version>3.2.7</dep.docker-java.version>
-        <dep.coral.version>1.0.25</dep.coral.version>
+        <dep.coral.version>1.0.33</dep.coral.version>
         <dep.confluent.version>5.5.2</dep.confluent.version>
 
         <!--
@@ -107,6 +107,7 @@
         <module>plugin/trino-bigquery</module>
         <module>plugin/trino-blackhole</module>
         <module>plugin/trino-cassandra</module>
+        <module>plugin/trino-clickhouse</module>
         <module>plugin/trino-druid</module>
         <module>plugin/trino-elasticsearch</module>
         <module>plugin/trino-example-http</module>
@@ -128,6 +129,7 @@
         <module>plugin/trino-oracle</module>
         <module>plugin/trino-password-authenticators</module>
         <module>plugin/trino-phoenix</module>
+        <module>plugin/trino-phoenix5</module>
         <module>plugin/trino-pinot</module>
         <module>plugin/trino-postgresql</module>
         <module>plugin/trino-prometheus</module>
@@ -150,6 +152,7 @@
         <module>testing/trino-benchto-benchmarks</module>
         <module>testing/trino-product-tests</module>
         <module>testing/trino-product-tests-launcher</module>
+        <module>testing/trino-server-dev</module>
         <module>testing/trino-test-jdbc-compatibility-old-driver</module>
         <module>testing/trino-test-jdbc-compatibility-old-server</module>
         <module>testing/trino-testing</module>
@@ -273,6 +276,12 @@
             <dependency>
                 <groupId>io.trino</groupId>
                 <artifactId>trino-jdbc</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-jmx</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
@@ -534,7 +543,7 @@
             <dependency>
                 <groupId>io.trino.hive</groupId>
                 <artifactId>hive-apache</artifactId>
-                <version>3.1.2-7</version>
+                <version>3.1.2-12</version>
             </dependency>
 
             <dependency>
@@ -1700,7 +1709,9 @@
                                     -Xep:EqualsIncompatibleType:ERROR
                                     -Xep:FallThrough:ERROR
                                     -Xep:FormatString:ERROR
+                                    -Xep:GetClassOnAnnotation:ERROR
                                     -Xep:GetClassOnClass:ERROR
+                                    -Xep:IdentityBinaryExpression:ERROR
                                     -Xep:ImmutableSetForContains:ERROR
                                     -Xep:InconsistentHashCode:ERROR
                                     -Xep:InjectOnConstructorOfAbstractClass:ERROR
@@ -1712,6 +1723,7 @@
                                     -Xep:OptionalEquality:ERROR
                                     -Xep:OptionalMapUnusedValue:ERROR
                                     -Xep:PreconditionsInvalidPlaceholder:ERROR
+                                    -Xep:ReturnValueIgnored:ERROR
                                     -Xep:StaticQualifiedUsingExpression:ERROR
                                     -Xep:ThrowIfUncheckedKnownChecked:ERROR
                                     -Xep:UnnecessaryCheckNotNull:ERROR
@@ -1719,6 +1731,7 @@
                                     -Xep:UnnecessaryOptionalGet:ERROR
                                     -Xep:UnusedVariable:ERROR
                                     -Xep:UseEnumSwitch:ERROR
+                                    -Xep:ZoneIdOfZ:ERROR
                                 </arg>
                             </compilerArgs>
                             <annotationProcessorPaths>

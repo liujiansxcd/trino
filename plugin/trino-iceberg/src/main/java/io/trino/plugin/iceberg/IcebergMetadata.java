@@ -287,6 +287,12 @@ public class IcebergMetadata
 
         TupleDomain<IcebergColumnHandle> enforcedPredicate = table.getEnforcedPredicate();
 
+        if (table.getSnapshotId().isEmpty()) {
+            // A table with missing snapshot id produces no splits, so we optimize here by returning
+            // TupleDomain.none() as the predicate
+            return new ConnectorTableProperties(TupleDomain.none(), Optional.empty(), Optional.empty(), Optional.empty(), ImmutableList.of());
+        }
+
         TableScan tableScan = icebergTable.newScan()
                 .useSnapshot(table.getSnapshotId().get())
                 .filter(toIcebergExpression(enforcedPredicate))
@@ -999,7 +1005,7 @@ public class IcebergMetadata
         String storageTable = materializedView.getParameters().getOrDefault(STORAGE_TABLE, "");
         return Optional.of(new ConnectorMaterializedViewDefinition(
                 definition.getOriginalSql(),
-                storageTable,
+                Optional.of(storageTable),
                 definition.getCatalog(),
                 Optional.of(viewName.getSchemaName()),
                 definition.getColumns(),

@@ -101,6 +101,74 @@ Materialized views
 The Hive connector supports reading from Hive materialized views.
 In Trino, these views are presented as regular, read-only tables.
 
+.. _hive-views:
+
+Hive views
+----------
+
+Hive views are defined in HiveQL and stored in the Hive Metastore Service. They
+are analyzed to allow read access to the data.
+
+The Hive connector includes support for reading Hive views with three different
+modes.
+
+* Disabled
+* Legacy
+* Experimental
+
+You can configure the behavior in your catalog properties file.
+
+**Disabled**
+
+The default behavior is to ignore Hive views. This means that your business
+logic and data encoded in the views is not available in Trino.
+
+**Legacy**
+
+A very simple implementation to execute Hive views, and therefore allow read
+access to the data in Trino, can be enabled with
+``hive.translate-hive-views=true`` and
+``hive.legacy-hive-view-translation=true``.
+
+For temporary usage of the legacy behavior for a specific catalog, you can set
+the``legacy_hive_view_translation`` :doc:`catalog session property
+</sql/set-session>` to ``true``.
+
+This legacy behavior interprets any HiveQL query that defines a view as if it
+is written in SQL. It does not do any translation, but instead relies on the
+fact that HiveQL is very similar to SQL.
+
+This works for very simple Hive views, but can lead to problems for more complex
+queries. For example, if a HiveQL function has an identical signature but
+different behaviors to the SQL version, the returned results may differ. In more
+extreme cases the queries might fail, or not even be able to be parsed and
+executed.
+
+**Experimental**
+
+The new behavior is better engineered, and has the potential to become a lot
+more powerful than the legacy implementation. It can analyze, process, and
+rewrite Hive views and contained expressions and statements.
+
+It is considered an experimental feature and continues to change with each
+release. However it is already suitable for many use cases, and usage is
+encouraged.
+
+You can enable the experimental behavior with
+``hive.translate-hive-views=true``.
+
+Keep in mind that numerous features are not yet implemented when experimenting
+with this feature. The following is an incomplete list of **missing**
+functionality:
+
+* HiveQL ``current_date``, ``current_timestamp``, and others
+* Hive function calls including ``translate()``, window functions and others
+* Common table expressions and simple case expressions
+* Honor timestamp precision setting
+* Support all Hive data types and correct mapping to Trino types
+* Ability to process custom UDFs
+
+
 Configuration
 -------------
 
@@ -294,10 +362,10 @@ Property Name                                      Description                  
 ``hive.orc.time-zone``                             Sets the default time zone for legacy ORC files that did     JVM default
                                                    not declare a time zone.
 
-``hive.timestamp-precision``                       Specifies the precision to use for columns of type           ``MILLISECONDS``
+``hive.timestamp-precision``                       Specifies the precision to use for Hive columns of type      ``MILLISECONDS``
                                                    ``timestamp``. Possible values are ``MILLISECONDS``,
-                                                   ``MICROSECONDS`` and ``NANOSECONDS``. Write operations
-                                                   are only supported for ``MILLISECONDS``.
+                                                   ``MICROSECONDS`` and ``NANOSECONDS``. Values with higher
+                                                   precision than configured are rounded.
 
 ``hive.temporary-staging-directory-enabled``       Controls whether the temporary staging directory configured  ``true``
                                                    at ``hive.temporary-staging-directory-path`` should be
@@ -313,11 +381,16 @@ Property Name                                      Description                  
                                                    is used for write operations. The ``${USER}`` placeholder
                                                    can be used to use a different location for each user.
 
-``hive.translate-hive-views``                      Enable translation for Hive views. (experimental)            ``false``
+``hive.translate-hive-views``                      Enable translation for :ref:`Hive views <hive-views>`.       ``false``
 
-``hive.legacy-hive-view-translation``              Use the legacy algorithm to translate Hive views. You can    ``false``
-                                                   alternatively set the ``legacy_hive_view_translation``
-                                                   session property to ``true``.
+``hive.legacy-hive-view-translation``              Use the legacy algorithm to translate                        ``false``
+                                                   :ref:`Hive views <hive-views>`. You can use the
+                                                   ``legacy_hive_view_translation`` catalog session property
+                                                   for temporary, catalog specific use.
+
+``hive.parallel-partitioned-bucketed-writes``      Improve parallelism of partitioned and bucketed table        ``true``
+                                                   writes. When disabled, the number of writing threads
+                                                   is limited to number of buckets.
 ================================================== ============================================================ ============
 
 Metastore configuration properties
@@ -455,6 +528,12 @@ Property Name                                        Description
 
 ``hive.metastore.glue.get-partition-threads``        Number of threads for parallel partition fetches from Glue,
                                                      defaults to ``20``.
+
+``hive.metastore.glue.read-statistics-threads``      Number of threads for parallel statistic fetches from Glue,
+                                                     defaults to ``1``.
+
+``hive.metastore.glue.write-statistics-threads``     Number of threads for parallel statistic writes to Glue,
+                                                     defaults to ``1``.
 ==================================================== ============================================================
 
 Google Cloud Storage configuration

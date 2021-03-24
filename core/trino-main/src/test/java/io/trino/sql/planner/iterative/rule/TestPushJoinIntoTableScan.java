@@ -54,6 +54,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.predicate.Domain.onlyNull;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.sql.planner.assertions.PlanMatchPattern.anyTree;
+import static io.trino.sql.planner.assertions.PlanMatchPattern.project;
 import static io.trino.sql.planner.assertions.PlanMatchPattern.tableScan;
 import static io.trino.sql.planner.iterative.rule.test.RuleTester.defaultRuleTester;
 import static io.trino.sql.planner.plan.JoinNode.Type.FULL;
@@ -79,7 +80,6 @@ public class TestPushJoinIntoTableScan
     private static final Session MOCK_SESSION = testSessionBuilder()
             .setCatalog(MOCK_CATALOG)
             .setSchema(SCHEMA)
-            .setSystemProperty("join_pushdown", "EAGER")
             .build();
 
     private static final String COLUMN_A1 = "columna1";
@@ -175,7 +175,8 @@ public class TestPushJoinIntoTableScan
                     })
                     .withSession(MOCK_SESSION)
                     .matches(
-                            tableScan(JOIN_PUSHDOWN_SCHEMA_TABLE_NAME.getTableName()));
+                            project(
+                                    tableScan(JOIN_PUSHDOWN_SCHEMA_TABLE_NAME.getTableName())));
         }
     }
 
@@ -306,7 +307,7 @@ public class TestPushJoinIntoTableScan
     public void testPushJoinIntoTableScanDoesNotFireWhenDisabled()
     {
         Session joinPushDownDisabledSession = Session.builder(MOCK_SESSION)
-                .setSystemProperty("join_pushdown", "DISABLED")
+                .setSystemProperty("allow_pushdown_into_connectors", "false")
                 .build();
 
         try (RuleTester ruleTester = defaultRuleTester()) {
@@ -424,10 +425,11 @@ public class TestPushJoinIntoTableScan
                     })
                     .withSession(MOCK_SESSION)
                     .matches(
-                            tableScan(
-                                    tableHandle -> JOIN_PUSHDOWN_SCHEMA_TABLE_NAME.equals(((MockConnectorTableHandle) tableHandle).getTableName()),
-                                    expectedConstraint,
-                                    ImmutableMap.of()));
+                            project(
+                                    tableScan(
+                                            tableHandle -> JOIN_PUSHDOWN_SCHEMA_TABLE_NAME.equals(((MockConnectorTableHandle) tableHandle).getTableName()),
+                                            expectedConstraint,
+                                            ImmutableMap.of())));
         }
     }
 

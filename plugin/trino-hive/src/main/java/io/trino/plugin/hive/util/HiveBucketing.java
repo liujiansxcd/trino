@@ -50,11 +50,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Lists.cartesianProduct;
 import static io.trino.plugin.hive.HiveColumnHandle.BUCKET_COLUMN_NAME;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_INVALID_METADATA;
+import static io.trino.plugin.hive.HiveMetadata.SPARK_TABLE_PROVIDER_KEY;
 import static io.trino.plugin.hive.HiveSessionProperties.getTimestampPrecision;
 import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V1;
 import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V2;
@@ -77,9 +77,9 @@ public final class HiveBucketing
             }
 
             @Override
-            int getBucketHashCode(List<TypeInfo> types, Page page, int prefixChannels, int position)
+            int getBucketHashCode(List<TypeInfo> types, Page page, int position)
             {
-                return HiveBucketingV1.getBucketHashCode(types, page, prefixChannels, position);
+                return HiveBucketingV1.getBucketHashCode(types, page, position);
             }
         },
         BUCKETING_V2(2) {
@@ -90,9 +90,9 @@ public final class HiveBucketing
             }
 
             @Override
-            int getBucketHashCode(List<TypeInfo> types, Page page, int prefixChannels, int position)
+            int getBucketHashCode(List<TypeInfo> types, Page page, int position)
             {
-                return HiveBucketingV2.getBucketHashCode(types, page, prefixChannels, position);
+                return HiveBucketingV2.getBucketHashCode(types, page, position);
             }
         },
         /**/;
@@ -111,13 +111,7 @@ public final class HiveBucketing
 
         abstract int getBucketHashCode(List<TypeInfo> types, Object[] values);
 
-        int getBucketHashCode(List<TypeInfo> types, Page page, int position)
-        {
-            checkArgument(types.size() == page.getChannelCount());
-            return getBucketHashCode(types, page, types.size(), position);
-        }
-
-        abstract int getBucketHashCode(List<TypeInfo> types, Page page, int prefixChannels, int position);
+        abstract int getBucketHashCode(List<TypeInfo> types, Page page, int position);
     }
 
     private static final long BUCKETS_EXPLORATION_LIMIT_FACTOR = 4;
@@ -136,12 +130,6 @@ public final class HiveBucketing
     public static int getHiveBucket(BucketingVersion bucketingVersion, int bucketCount, List<TypeInfo> types, Page page, int position)
     {
         return getBucketNumber(bucketingVersion.getBucketHashCode(types, page, position), bucketCount);
-    }
-
-    public static int getHiveBucket(BucketingVersion bucketingVersion, int bucketCount, List<TypeInfo> types, Page page, int prefixChannels, int position)
-    {
-        checkArgument(prefixChannels <= page.getChannelCount());
-        return getBucketNumber(bucketingVersion.getBucketHashCode(types, page, prefixChannels, position), bucketCount);
     }
 
     public static int getHiveBucket(BucketingVersion bucketingVersion, int bucketCount, List<TypeInfo> types, Object[] values)
@@ -193,6 +181,10 @@ public final class HiveBucketing
 
     public static Optional<HiveBucketHandle> getHiveBucketHandle(ConnectorSession session, Table table, TypeManager typeManager)
     {
+        if (table.getParameters().containsKey(SPARK_TABLE_PROVIDER_KEY)) {
+            return Optional.empty();
+        }
+
         Optional<HiveBucketProperty> hiveBucketProperty = table.getStorage().getBucketProperty();
         if (hiveBucketProperty.isEmpty()) {
             return Optional.empty();

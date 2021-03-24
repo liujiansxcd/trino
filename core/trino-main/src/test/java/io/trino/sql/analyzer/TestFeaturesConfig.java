@@ -56,7 +56,8 @@ public class TestFeaturesConfig
                 .setJoinReorderingStrategy(JoinReorderingStrategy.AUTOMATIC)
                 .setMaxReorderedJoins(9)
                 .setRedistributeWrites(true)
-                .setUsePreferredWritePartitioning(false)
+                .setUsePreferredWritePartitioning(true)
+                .setPreferredWritePartitioningMinNumberOfPartitions(50)
                 .setScaleWriters(false)
                 .setWriterMinSize(DataSize.of(32, MEGABYTE))
                 .setOptimizeMetadataQueries(false)
@@ -108,8 +109,8 @@ public class TestFeaturesConfig
                 .setRewriteFilteringSemiJoinToInnerJoin(true)
                 .setOptimizeDuplicateInsensitiveJoins(true)
                 .setUseLegacyWindowFilterPushdown(false)
-                .setPlanWithTableNodePartitioning(true)
-                .setJoinPushdownMode(FeaturesConfig.JoinPushdownMode.DISABLED));
+                .setUseTableScanNodePartitioning(true)
+                .setTableScanNodePartitioningMinBucketToTaskRatio(0.5));
     }
 
     @Test
@@ -136,7 +137,8 @@ public class TestFeaturesConfig
                 .put("optimizer.join-reordering-strategy", "NONE")
                 .put("optimizer.max-reordered-joins", "5")
                 .put("redistribute-writes", "false")
-                .put("use-preferred-write-partitioning", "true")
+                .put("use-preferred-write-partitioning", "false")
+                .put("preferred-write-partitioning-min-number-of-partitions", "10")
                 .put("scale-writers", "true")
                 .put("writer-min-size", "42GB")
                 .put("optimizer.optimize-metadata-queries", "true")
@@ -182,8 +184,8 @@ public class TestFeaturesConfig
                 .put("optimizer.rewrite-filtering-semi-join-to-inner-join", "false")
                 .put("optimizer.optimize-duplicate-insensitive-joins", "false")
                 .put("optimizer.use-legacy-window-filter-pushdown", "true")
-                .put("optimizer.plan-with-table-node-partitioning", "false")
-                .put("optimizer.join-pushdown", "EAGER")
+                .put("optimizer.use-table-scan-node-partitioning", "false")
+                .put("optimizer.table-scan-node-partitioning-min-bucket-to-task-ratio", "0.0")
                 .build();
 
         FeaturesConfig expected = new FeaturesConfig()
@@ -206,7 +208,8 @@ public class TestFeaturesConfig
                 .setJoinReorderingStrategy(NONE)
                 .setMaxReorderedJoins(5)
                 .setRedistributeWrites(false)
-                .setUsePreferredWritePartitioning(true)
+                .setUsePreferredWritePartitioning(false)
+                .setPreferredWritePartitioningMinNumberOfPartitions(10)
                 .setScaleWriters(true)
                 .setWriterMinSize(DataSize.of(42, GIGABYTE))
                 .setOptimizeMetadataQueries(true)
@@ -253,8 +256,8 @@ public class TestFeaturesConfig
                 .setRewriteFilteringSemiJoinToInnerJoin(false)
                 .setOptimizeDuplicateInsensitiveJoins(false)
                 .setUseLegacyWindowFilterPushdown(true)
-                .setPlanWithTableNodePartitioning(false)
-                .setJoinPushdownMode(FeaturesConfig.JoinPushdownMode.EAGER);
+                .setUseTableScanNodePartitioning(false)
+                .setTableScanNodePartitioningMinBucketToTaskRatio(0.0);
         assertFullMapping(properties, expected);
     }
 }
